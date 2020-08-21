@@ -1,0 +1,99 @@
+---
+output: github_document
+---
+
+# The Changing Shape of the Tour de France
+
+Adapted from [this](https://www.lemonde.fr/les-decodeurs/article/2017/06/29/combien-de-fois-le-tour-de-france-a-t-il-traverse-votre-departement_5153251_4355770.html) article in Le Monde; all creative plaudits due to Pierre Breteau.
+
+<!-- README.md is generated from README.Rmd. Please edit that file -->
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+```
+
+```{r, echo = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.path = "man/figures/README-",
+  gganimate = list(
+    nframes = 50
+  )
+)
+```
+
+```{r}
+library(tidyverse)
+library(gganimate)
+
+## --- FUNCTIONS --------------------------------------------------------------
+
+# used to facilitate joins between data sets with different use of special
+# characters
+simplify_french_strings <- function(str){
+  str %>%
+    chartr("èéô-", "eeo ", .) %>%
+    str_remove("'") %>%
+    tolower()
+}
+
+## ---- IMPORT DATA ----------------------------------------------------------
+
+# each row corresponds to a year and a department visited
+tdf_depts <- read_csv("./data/tdf-departments.csv") %>%
+  gather("index", "insee", -date) %>%
+  rename(year = date) %>%
+  filter(!is.na(insee))
+
+# polygon data for departments
+france_map <- map_data("france") %>%
+  mutate(department_simple = simplify_french_strings(region))
+
+# mapping of department INSEE number to department names
+depts_lkup <- read_csv("./data/departements-region.csv") %>%
+  transmute(
+    insee = str_remove(num_dep, "^0"),
+    department = dep_name,
+    department_simple = simplify_french_strings(department)
+  )
+
+## ---- PLOT DATA -------------------------------------------------------------
+
+dept_visits <- 
+  # get a copy of each year / department pair
+  crossing(
+    depts_lkup,
+    year = min(tdf_depts$year):max(tdf_depts$year)
+  ) %>%
+  # identify whether TdF visited department in given year
+  left_join(tdf_depts) %>%
+  mutate(visited = 1 * !is.na(index)) %>%
+  # get accumulated visits over time, and no. visits in last 20 years
+  group_by(department) %>%
+  arrange(year) %>%
+  mutate(
+    visits_accumulated = cumsum(visited),
+    visits_last_20_yrs = visits_accumulated - lag(visits_accumulated, 20,default = 0)
+  ) %>%
+  ungroup()
+
+## ---- PLOT ------------------------------------------------------------------
+
+plot_data <- dept_visits %>%
+  # remove first 19 years
+  filter(year >= min(year) + 19) %>%
+  left_join(france_map)
+
+plot <- ggplot(plot_data, aes(long, lat, group = group, fill = visits_last_20_yrs)) + geom_polygon() +
+  coord_map() +
+  scale_fill_gradientn(colours = c("#f6f4e6", "#fddb3a", "#f3be02"), name = "No. Visits") +
+  scale_x_continuous(breaks=NULL) + scale_y_continuous(breaks = NULL) +
+  theme_minimal() + xlab("") + ylab("") +
+  ggtitle('Tour de France Visits by Department (20 year rolling count)')#,
+        # subtitle = 'Year:{year}')
+
+anim <- plot + transition_manual(year)
+anim
+```
